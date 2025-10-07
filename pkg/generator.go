@@ -111,7 +111,7 @@ func GenerateJsonSchema(ctx context.Context, config *Config) error {
 	}
 
 	if config.Bundle {
-		if err := Bundle(ctx, mergedSchema, config.Output, config.BundleRoot, config.BundleWithoutID); err != nil {
+		if err := Bundle(ctx, mergedSchema, config.Output, config.BundleRoot, config.BundleWithoutID, config.BundleCacheMin); err != nil {
 			return err
 		}
 	}

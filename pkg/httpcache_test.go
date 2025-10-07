@@ -242,7 +242,7 @@ func TestSaveCache(t *testing.T) {
 			req, err := http.NewRequest(http.MethodGet, tt.url, nil)
 			require.NoError(t, err)
 
-			cached, err := cache.SaveCache(req, tt.resp, tt.body)
+			cached, err := cache.SaveCache(req, tt.resp, tt.body, 0)
 			require.NoError(t, err)
 			testutil.Equal(t, tt.want, cached)
 
@@ -269,7 +269,7 @@ func TestSaveCache_Error(t *testing.T) {
 				http.CanonicalHeaderKey("Cache-Control"): []string{"max-age=100"},
 				http.CanonicalHeaderKey("ETag"):          []string{"myETag"},
 			},
-		}, nil)
+		}, nil, 0)
 		assert.ErrorContains(t, err, "mkdir:")
 	})
 
@@ -288,7 +288,7 @@ func TestSaveCache_Error(t *testing.T) {
 				http.CanonicalHeaderKey("Cache-Control"): []string{"max-age=100"},
 				http.CanonicalHeaderKey("ETag"):          []string{"myETag"},
 			},
-		}, nil)
+		}, nil, 0)
 		assert.ErrorContains(t, err, "create cache file:")
 	})
 }
@@ -479,6 +479,162 @@ func TestCachedSchema_Expiry(t *testing.T) {
 			cached := CachedResponse{CachedAt: tt.time, MaxAge: tt.maxAge}
 			testutil.Equal(t, tt.want, cached.Expired())
 			assert.WithinDuration(t, tt.time.Add(tt.maxAge), cached.Expiry(), time.Second)
+		})
+	}
+}
+
+func TestSaveCache_MinimumCacheDuration(t *testing.T) {
+	now := time.Date(2025, 6, 9, 12, 0, 0, 0, time.UTC)
+	tests := []struct {
+		name             string
+		url              string
+		resp             *http.Response
+		body             []byte
+		minCacheDuration time.Duration
+		want             CachedResponse
+	}{
+		{
+			name: "min cache duration not specified",
+			url:  "http://example.com",
+			resp: &http.Response{
+				Header: http.Header{
+					http.CanonicalHeaderKey("Cache-Control"): []string{"max-age=100"},
+					http.CanonicalHeaderKey("ETag"):          []string{"myETag"},
+				},
+			},
+			body:             []byte("foo"),
+			minCacheDuration: 0,
+			want: CachedResponse{
+				CachedAt: now,
+				MaxAge:   100 * time.Second,
+				Data:     []byte("foo"),
+				ETag:     "myETag",
+			},
+		},
+		{
+			name: "min cache duration smaller than server max-age",
+			url:  "http://example.com",
+			resp: &http.Response{
+				Header: http.Header{
+					http.CanonicalHeaderKey("Cache-Control"): []string{"max-age=1000"},
+					http.CanonicalHeaderKey("ETag"):          []string{"myETag"},
+				},
+			},
+			body:             []byte("foo"),
+			minCacheDuration: 100 * time.Second,
+			want: CachedResponse{
+				CachedAt: now,
+				MaxAge:   1000 * time.Second, // Server max-age is used
+				Data:     []byte("foo"),
+				ETag:     "myETag",
+			},
+		},
+		{
+			name: "min cache duration larger than server max-age",
+			url:  "http://example.com",
+			resp: &http.Response{
+				Header: http.Header{
+					http.CanonicalHeaderKey("Cache-Control"): []string{"max-age=100"},
+					http.CanonicalHeaderKey("ETag"):          []string{"myETag"},
+				},
+			},
+			body:             []byte("foo"),
+			minCacheDuration: 24 * time.Hour,
+			want: CachedResponse{
+				CachedAt: now,
+				MaxAge:   24 * time.Hour, // Min cache duration is used
+				Data:     []byte("foo"),
+				ETag:     "myETag",
+			},
+		},
+		{
+			name: "min cache duration override with short server max-age",
+			url:  "http://example.com",
+			resp: &http.Response{
+				Header: http.Header{
+					http.CanonicalHeaderKey("Cache-Control"): []string{"max-age=300"}, // 5 minutes
+					http.CanonicalHeaderKey("ETag"):          []string{"myETag"},
+				},
+			},
+			body:             []byte("foo"),
+			minCacheDuration: 7 * 24 * time.Hour, // 1 week
+			want: CachedResponse{
+				CachedAt: now,
+				MaxAge:   7 * 24 * time.Hour, // 1 week is used
+				Data:     []byte("foo"),
+				ETag:     "myETag",
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cache := NewHTTPCache()
+			dir := testutil.CreateTempDir(t, "schema-httpcache-*")
+			cache.cacheDirFunc = func() string { return dir }
+			cache.now = func() time.Time { return now }
+
+			req, err := http.NewRequest(http.MethodGet, tt.url, nil)
+			require.NoError(t, err)
+
+			cached, err := cache.SaveCache(req, tt.resp, tt.body, tt.minCacheDuration)
+			require.NoError(t, err)
+			testutil.Equal(t, tt.want, cached)
+
+			// Verify it can be loaded back
+			loaded, err := cache.LoadCache(req)
+			require.NoError(t, err)
+			testutil.Equal(t, tt.want, loaded)
+		})
+	}
+}
+
+func TestHTTPMemoryCache_MinimumCacheDuration(t *testing.T) {
+	now := time.Date(2025, 6, 9, 12, 0, 0, 0, time.UTC)
+	tests := []struct {
+		name             string
+		url              string
+		resp             *http.Response
+		body             []byte
+		minCacheDuration time.Duration
+		want             CachedResponse
+	}{
+		{
+			name: "min cache duration override in memory cache",
+			url:  "http://example.com",
+			resp: &http.Response{
+				Header: http.Header{
+					http.CanonicalHeaderKey("Cache-Control"): []string{"max-age=100"},
+					http.CanonicalHeaderKey("ETag"):          []string{"myETag"},
+				},
+			},
+			body:             []byte("foo"),
+			minCacheDuration: 24 * time.Hour,
+			want: CachedResponse{
+				CachedAt: now,
+				MaxAge:   24 * time.Hour,
+				Data:     []byte("foo"),
+				ETag:     "myETag",
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cache := NewHTTPMemoryCache()
+			cache.Now = func() time.Time { return now }
+
+			req, err := http.NewRequest(http.MethodGet, tt.url, nil)
+			require.NoError(t, err)
+
+			cached, err := cache.SaveCache(req, tt.resp, tt.body, tt.minCacheDuration)
+			require.NoError(t, err)
+			testutil.Equal(t, tt.want, cached)
+
+			// Verify it can be loaded back
+			loaded, err := cache.LoadCache(req)
+			require.NoError(t, err)
+			testutil.Equal(t, tt.want, loaded)
 		})
 	}
 }

@@ -38,6 +38,12 @@ bundleRoot: "" # @schema default: ""; examples: [./, ../]
 # Flag: --bundle-without-id
 bundleWithoutID: false # @schema default: false
 
+# -- Minimum cache duration for bundled HTTP schemas.
+# Overrides server's Cache-Control max-age when larger.
+# Supports Go duration (24h) and extended units (1d, 1w, 1M, 1y).
+# Flag: --bundle-cache-min
+bundleCacheMin: "" # @schema default: ""; examples: [24h, 7d, 1w, 1M]
+
 # -- URL template used in "$ref: $k8s/..." alias.
 # Uses Go text templating, where "{{ .K8sSchemaVersion }}" maps to the k8sSchemaVersion config.
 # Flag: --k8s-schema-url

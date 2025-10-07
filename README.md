@@ -126,6 +126,7 @@ Usage:
 
 Flags:
       --bundle                              Bundle referenced ($ref) subschemas into a single file inside $defs
+      --bundle-cache-min string             Minimum cache duration for bundled HTTP schemas (e.g., 24h, 7d, 1w, 1M, 1y)
       --bundle-root string                  Root directory to allow local referenced files to be loaded from (default current working directory)
       --bundle-without-id                   Bundle without using $id to reference bundled schemas, which improves compatibility with e.g the VS Code JSON extension
       --config string                       Config file for setting defaults. (default ".schema.yaml")
@@ -166,6 +167,7 @@ output: values.schema.json
 bundle: false
 bundleRoot: ""
 bundleWithoutID: false
+bundleCacheMin: ""
 
 k8sSchemaURL: https://raw.githubusercontent.com/yannh/kubernetes-json-schema/refs/heads/master/{{ .K8sSchemaVersion }}/
 k8sSchemaVersion: "v1.33.1"
@@ -357,6 +359,49 @@ Generated schema will be:
     "type": "object"
 }
 ```
+
+##### Overriding HTTP cache duration for bundled schemas
+
+When bundling schemas with `--bundle`, the plugin respects the `Cache-Control` headers from schema servers. However, many schema stores only cache for 5 or 30 minutes, which can cause frequent re-fetching during development or CI/CD pipelines.
+
+You can override the minimum cache duration using the `--bundle-cache-min` flag:
+
+```bash
+# Cache schemas for at least 24 hours
+helm schema --bundle --bundle-cache-min 24h
+
+# Cache for one week using extended duration syntax
+helm schema --bundle --bundle-cache-min 1w
+
+# Cache for one month
+helm schema --bundle --bundle-cache-min 1M
+```
+
+Or in your `.schema.yaml` config file:
+
+```yaml
+bundle: true
+bundleCacheMin: 24h  # or 1d, 1w, 1M, 1y
+```
+
+**Supported duration formats:**
+- Standard Go durations: `24h`, `30m`, `45s`
+- Extended units:
+  - `d` = 24 hours (day)
+  - `w` = 7 days (week)
+  - `M` = 30 days (month)
+  - `y` = 365 days (year)
+- Composite: `1w3d12h30m` (1 week, 3 days, 12 hours, 30 minutes)
+
+**How it works:**
+- If the server's `max-age` is **larger** than your minimum, the server's value is used
+- If the server's `max-age` is **smaller** than your minimum, your minimum is used
+- If no minimum is specified, the server's `Cache-Control` header is always respected
+
+This is particularly useful for:
+- CI/CD pipelines that run frequently
+- Development workflows where schemas rarely change
+- Reducing external HTTP requests during builds
 
 ## Issues, Features, Feedback
 

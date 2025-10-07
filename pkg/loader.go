@@ -45,9 +45,10 @@ func (r *RootFS) Open(name string) (fs.File, error) {
 	return ((*os.Root)(r)).Open(name)
 }
 
-func NewDefaultLoader(client *http.Client, bundleFS fs.FS, basePath string) Loader {
+func NewDefaultLoader(client *http.Client, bundleFS fs.FS, basePath string, minCacheDuration time.Duration) Loader {
 	fileLoader := NewFileLoader(bundleFS, basePath)
 	httpLoader := NewHTTPLoader(client, NewHTTPCache())
+	httpLoader.MinCacheDuration = minCacheDuration
 	return NewCacheLoader(URLSchemeLoader{
 		"http":  httpLoader,
 		"https": httpLoader,
@@ -226,8 +227,9 @@ type HTTPLoader struct {
 	client *http.Client
 	cache  HTTPCache
 
-	SizeLimit int64
-	UserAgent string
+	SizeLimit        int64
+	UserAgent        string
+	MinCacheDuration time.Duration
 }
 
 func NewHTTPLoader(client *http.Client, cache HTTPCache) HTTPLoader {
@@ -305,7 +307,7 @@ func (loader HTTPLoader) Load(ctx context.Context, ref *url.URL) (*Schema, error
 	defer closeIgnoreError(resp.Body)
 
 	if cached.ETag != "" && resp.StatusCode == http.StatusNotModified {
-		cached, schema, err := loader.SaveCacheETag(req, resp, cached)
+		cached, schema, err := loader.SaveCacheETag(req, resp, cached, loader.MinCacheDuration)
 		if err == nil {
 			duration := time.Since(start)
 			logger.Logf("=> renewed cache of %s in %s (expires in %s)",
@@ -365,7 +367,7 @@ func (loader HTTPLoader) Load(ctx context.Context, ref *url.URL) (*Schema, error
 		return nil, fmt.Errorf("request $ref=%q over HTTP: %w", ref.Redacted(), err)
 	}
 
-	cached, err = loader.SaveCache(req, resp, b)
+	cached, err = loader.SaveCache(req, resp, b, loader.MinCacheDuration)
 	if err != nil {
 		logger.Log("Error saving response cache:", err)
 	}
@@ -402,22 +404,22 @@ func (loader HTTPLoader) Load(ctx context.Context, ref *url.URL) (*Schema, error
 	return &schema, nil
 }
 
-func (loader HTTPLoader) SaveCache(req *http.Request, resp *http.Response, body []byte) (CachedResponse, error) {
+func (loader HTTPLoader) SaveCache(req *http.Request, resp *http.Response, body []byte, minCacheDuration time.Duration) (CachedResponse, error) {
 	if loader.cache == nil {
 		return CachedResponse{}, nil
 	}
-	cached, err := loader.cache.SaveCache(req, resp, body)
+	cached, err := loader.cache.SaveCache(req, resp, body, minCacheDuration)
 	if err != nil {
 		return CachedResponse{}, err
 	}
 	return cached, nil
 }
 
-func (loader HTTPLoader) SaveCacheETag(req *http.Request, resp *http.Response, cached CachedResponse) (CachedResponse, *Schema, error) {
+func (loader HTTPLoader) SaveCacheETag(req *http.Request, resp *http.Response, cached CachedResponse, minCacheDuration time.Duration) (CachedResponse, *Schema, error) {
 	if loader.cache == nil {
 		return CachedResponse{}, nil, nil
 	}
-	renewedCache, err := loader.cache.SaveCache(req, resp, cached.Data)
+	renewedCache, err := loader.cache.SaveCache(req, resp, cached.Data, minCacheDuration)
 	if err != nil {
 		return CachedResponse{}, nil, err
 	}

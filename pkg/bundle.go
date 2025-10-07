@@ -10,6 +10,7 @@ import (
 	"path"
 	"path/filepath"
 	"strings"
+	"time"
 )
 
 // Bundle will use default loader settings to bundle all $ref into $defs
@@ -19,7 +20,11 @@ import (
 //
 // The paths, outputDir & bundleRoot, are only used to change absolute paths
 // into relative paths in a solely cosmetic way.
-func Bundle(ctx context.Context, schema *Schema, outputDir, bundleRoot string, withoutIDs bool) error {
+//
+// The minCacheDurationStr parameter allows overriding the minimum cache duration
+// for HTTP requests. Supported formats include Go duration (24h) and extended units
+// (1d, 1w, 1M, 1y). Empty string means use server's cache control headers.
+func Bundle(ctx context.Context, schema *Schema, outputDir, bundleRoot string, withoutIDs bool, minCacheDurationStr string) error {
 	absOutputDir, err := filepath.Abs(filepath.Dir(filepath.FromSlash(outputDir)))
 	if err != nil {
 		return fmt.Errorf("output %s: get absolute path: %w", outputDir, err)
@@ -30,13 +35,21 @@ func Bundle(ctx context.Context, schema *Schema, outputDir, bundleRoot string, w
 		return fmt.Errorf("bundle root %s: get absolute path: %w", bundleRoot, err)
 	}
 
+	var minCacheDuration time.Duration
+	if minCacheDurationStr != "" {
+		minCacheDuration, err = ParseDuration(minCacheDurationStr)
+		if err != nil {
+			return fmt.Errorf("invalid bundle-cache-min %q: %w", minCacheDurationStr, err)
+		}
+	}
+
 	root, err := os.OpenRoot(bundleRootAbs)
 	if err != nil {
 		return fmt.Errorf("bundle root %s: %w", bundleRoot, err)
 	}
 	defer closeIgnoreError(root)
 
-	loader := NewDefaultLoader(http.DefaultClient, (*RootFS)(root), bundleRootAbs)
+	loader := NewDefaultLoader(http.DefaultClient, (*RootFS)(root), bundleRootAbs, minCacheDuration)
 	return bundleWithLoader(ctx, loader, schema, absOutputDir, withoutIDs)
 }
 

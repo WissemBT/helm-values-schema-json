@@ -19,12 +19,12 @@ import (
 
 type HTTPCache interface {
 	LoadCache(req *http.Request) (CachedResponse, error)
-	SaveCache(req *http.Request, resp *http.Response, body []byte) (CachedResponse, error)
+	SaveCache(req *http.Request, resp *http.Response, body []byte, minCacheDuration time.Duration) (CachedResponse, error)
 }
 
 type DummyHTTPCache struct {
 	LoadCacheFunc func(req *http.Request) (CachedResponse, error)
-	SaveCacheFunc func(req *http.Request, resp *http.Response, body []byte) (CachedResponse, error)
+	SaveCacheFunc func(req *http.Request, resp *http.Response, body []byte, minCacheDuration time.Duration) (CachedResponse, error)
 }
 
 var _ HTTPCache = DummyHTTPCache{}
@@ -33,8 +33,8 @@ func (d DummyHTTPCache) LoadCache(req *http.Request) (CachedResponse, error) {
 	return d.LoadCacheFunc(req)
 }
 
-func (d DummyHTTPCache) SaveCache(req *http.Request, resp *http.Response, body []byte) (CachedResponse, error) {
-	return d.SaveCacheFunc(req, resp, body)
+func (d DummyHTTPCache) SaveCache(req *http.Request, resp *http.Response, body []byte, minCacheDuration time.Duration) (CachedResponse, error) {
+	return d.SaveCacheFunc(req, resp, body, minCacheDuration)
 }
 
 func NewHTTPMemoryCache() *HTTPMemoryCache {
@@ -58,11 +58,15 @@ func (h *HTTPMemoryCache) LoadCache(req *http.Request) (CachedResponse, error) {
 	return CachedResponse{}, os.ErrNotExist
 }
 
-func (h *HTTPMemoryCache) SaveCache(req *http.Request, resp *http.Response, body []byte) (CachedResponse, error) {
+func (h *HTTPMemoryCache) SaveCache(req *http.Request, resp *http.Response, body []byte, minCacheDuration time.Duration) (CachedResponse, error) {
 	maxAge := getCacheControlMaxAge(resp.Header.Get("Cache-Control"))
 	if maxAge <= 0 {
 		// Response doesn't want to be cached.
 		return CachedResponse{}, nil
+	}
+	// Override max age with minimum cache duration if specified and larger
+	if minCacheDuration > 0 && minCacheDuration > maxAge {
+		maxAge = minCacheDuration
 	}
 	cached := CachedResponse{
 		Data:     body,
@@ -117,11 +121,16 @@ func (h *HTTPFileCache) LoadCache(req *http.Request) (CachedResponse, error) {
 	return cached, nil
 }
 
-func (h *HTTPFileCache) SaveCache(req *http.Request, resp *http.Response, body []byte) (CachedResponse, error) {
+func (h *HTTPFileCache) SaveCache(req *http.Request, resp *http.Response, body []byte, minCacheDuration time.Duration) (CachedResponse, error) {
 	maxAge := getCacheControlMaxAge(resp.Header.Get("Cache-Control"))
 	if maxAge <= 0 {
 		// Response doesn't want to be cached.
 		return CachedResponse{}, nil
+	}
+
+	// Override max age with minimum cache duration if specified and larger
+	if minCacheDuration > 0 && minCacheDuration > maxAge {
+		maxAge = minCacheDuration
 	}
 
 	cached := CachedResponse{
